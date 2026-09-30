@@ -1,226 +1,62 @@
-
 # HTB — [NOM DU LAB]
 
-> **Difficulté :** [Very Easy / Easy / Medium / Hard]  
-> **OS :** [Linux / Windows]  
-> **IP :** `[IP]`  
+> **Difficulté :** [Very Easy / Easy / Medium / Hard]
+> **OS :** [Linux / Windows]
+> **IP :** `[IP]`
 > **Date :** [DATE]
 
 ---
 
-## 1. Objectif
+## Description
 
-Quelques lignes pour expliquer ce que l'on doit faire sur cette machine et, si elle est connue, quelle vulnérabilité ou technique principale est utilisée.
-
-**Objectif :**  
-[Expliquer rapidement le but du lab]
+Description générale de ce type de vulnérabilité et dans quel *workflow* de l'application/machine elle s'inscrit (service exposé, fonctionnalité concernée, contexte général du lab).
 
 ---
 
-## 2. Reconnaissance
+## Exploitation
 
-### Scan Nmap
+Description de chacune des étapes d'exploitation :
+
+1. **Reconnaissance** — scan des services (Nmap), énumération web (Gobuster/ffuf), etc.
+2. **Découverte de la vulnérabilité** — comment on l'identifie (version, comportement, fichier exposé...).
+3. **Exploitation** — comment on en tire un accès (foothold).
+4. **Élévation de privilèges** — étapes qui mènent à un accès root/admin.
+
+---
+
+## PoC
+
+**PoC Code :**
 
 ```bash
-nmap -sV [IP]
+Code goes here
 ```
-
-**Résultat :**
-
-```text
-[Résultat intéressant du scan]
-```
-
-**Ce que l'on remarque :**
-
-- Port `[XX]` → [service]
-    
-- Port `[XX]` → [service]
-    
-- [Autre information intéressante]
-    
-
----
-
-## 3. Énumération
-
-### [Service / Site découvert]
-
-**Commande utilisée :**
-
-```bash
-[commande]
-```
-
-**Résultat :**
-
-```text
-[résultat]
-```
-
-**Interprétation :**
-
-[Expliquer simplement ce que cette découverte nous apprend et pourquoi on continue dans cette direction.]
-
-### Autres découvertes
-
-- `[chemin / endpoint / fichier]` → [explication]
-    
-- `[chemin / endpoint / fichier]` → [explication]
-    
-
----
-
-## 4. Vulnérabilité
-
-### Identification
-
-**Vulnérabilité :** [Nom / CVE / mauvaise configuration]
-
-**Explication :**
-
-[Expliquer simplement pourquoi la cible est vulnérable.]
-
-**Comment on l'a trouvée :**
-
-[Expliquer le cheminement : scan → service → version → recherche → test...]
-
----
-
-## 5. Exploitation
-
-### Étape 1 — [Nom de l'étape]
-
-**Requête / commande :**
-
-```bash
-[commande]
-```
-
-ou
 
 ```http
-[requête HTTP]
-```
-
-**Résultat :**
-
-```text
-[résultat]
-```
-
-**Explication :**
-
-[Qu'est-ce qui s'est passé ? Pourquoi cette réponse est intéressante ?]
-
----
-
-### Étape 2 — [Nom de l'étape]
-
-**Commande :**
-
-```bash
-[commande]
-```
-
-**Résultat :**
-
-```text
-[résultat]
-```
-
-**Explication :**
-
-[Explication simple]
-
----
-
-## 6. Accès obtenu
-
-**Accès :** [Shell / RCE / compte utilisateur / root / Administrator...]
-
-**Vérification :**
-
-```bash
-[commande]
-```
-
-**Résultat :**
-
-```text
-[résultat]
-```
-
-**Interprétation :**
-
-[Expliquer les droits obtenus.]
-
----
-
-## 7. Récupération des flags
-
-### User Flag
-
-```bash
-[commande]
-```
-
-```text
-[flag]
-```
-
-### Root Flag
-
-```bash
-[commande]
-```
-
-```text
-[flag]
+Code goes here
 ```
 
 ---
 
-## 8. Chemin d'exploitation
+## Risk
 
-Résumé du chemin suivi pendant le lab :
-
-```text
-Reconnaissance
-      ↓
-Nmap
-      ↓
-[Service découvert]
-      ↓
-[Énumération]
-      ↓
-[Vulnérabilité]
-      ↓
-[Exploitation]
-      ↓
-[Accès]
-      ↓
-User Flag / Root Flag
-```
+Description des risques pour l'application, ses utilisateurs et l'entreprise (compromission totale de la machine, fuite d'identifiants, mouvement latéral, etc.).
 
 ---
 
-## 9. Résumé
+## Remediation
+
+Éléments de remédiation pour aider le program manager dans le traitement du rapport (correctifs techniques, durcissement de configuration, bonnes pratiques).
+
+---
+
+## Résumé
 
 **Machine :** [Nom]
-
 **Vulnérabilité principale :** [Vulnérabilité]
-
 **Accès initial :** [Accès]
-
 **Privilèges obtenus :** [Utilisateur / Root / Administrator]
 
 **Flags :**
-
 - User : `[flag]`
-    
 - Root : `[flag]`
-    
-
-**Méthode en une phrase :**  
-[Résumer l'exploitation en une seule phrase.]

