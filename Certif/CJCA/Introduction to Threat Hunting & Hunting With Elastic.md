@@ -4,8 +4,9 @@
 > - 📘 Résumé du cours (traduit en français)
 > - 🔑 À retenir absolument
 > - ⌨️ Requêtes / commandes importantes
-> - ✅ Question + réponse en français + **réponse à mettre sur HTB**
-> - 🧭 Comment arriver à la réponse
+> - ✅ Question, réponse en français, et **Réponse à mettre sur HTB** (en anglais, telle qu'attendue)
+> - 🧭 Procédure détaillée, étape par étape, pour retrouver la réponse
+> - ⚠️ Passage reconstitué (absent du cours). À vérifier sur la cible.
 
 ---
 
@@ -17,7 +18,79 @@
 4. [Page 4 — Threat Intelligence Fundamentals](#page-4--threat-intelligence-fundamentals)
 5. [Page 5 — Hunting For Stuxbot](#page-5--hunting-for-stuxbot)
 6. [Page 6 — Skills Assessment : Hunting For Stuxbot (Round 2)](#page-6--skills-assessment--hunting-for-stuxbot-round-2)
-7. [Mémo final : tableau de toutes les réponses](#mémo-final--toutes-les-réponses-htb)
+7. [Mémo final : toutes les réponses HTB](#mémo-final--toutes-les-réponses-htb)
+8. [Cheat-sheet KQL](#cheat-sheet-kql-du-module)
+
+---
+
+# 🔌 Bloc de connexion à la cible (valable pour les pages 5 et 6)
+
+Les questions des pages 5 et 6 se font sur une machine cible HTB avec **Kibana** (port **5601**). Deux façons de s'y connecter.
+
+## Option A — Depuis le Pwnbox (le plus simple)
+
+| Étape | Action |
+|---|---|
+| A1 | En bas de la section, clique sur **Spawn Target** et note l'**IP cible** (ex. `10.129.xx.xx`) |
+| A2 | Clique sur **Linux Pwnbox** → **View Linux Pwnbox** et attends le chargement du bureau |
+| A3 | Ouvre **Firefox** dans le Pwnbox |
+| A4 | Va sur `http://IP_CIBLE:5601` |
+| A5 | Attends **3 à 5 minutes** après le spawn si la page ne répond pas, puis recharge (F5) |
+
+Test en ligne de commande depuis un terminal du Pwnbox :
+```bash
+# Vérifie que Kibana répond (attendu : HTTP/1.1 200 OK ou 302 Found)
+curl -sI http://IP_CIBLE:5601/ | head -n 1
+
+# Vérifie que le port 5601 est ouvert (attendu : 5601/tcp open)
+nmap -Pn -p 5601 IP_CIBLE
+```
+
+## Option B — Depuis ta propre machine (VPN)
+
+| Étape | Commande / action |
+|---|---|
+| B1 | Section du cours → bouton **OVPN** → **View VPN** → **Download VPN Connection File** (fichier `.ovpn`) |
+| B2 | Dans un terminal, lance le VPN (laisse ce terminal ouvert) : |
+
+```bash
+sudo openvpn ~/Downloads/NOM_DU_FICHIER.ovpn
+# Attendu à la fin : "Initialization Sequence Completed"
+```
+
+| Étape | Commande / action |
+|---|---|
+| B3 | Dans un **second terminal**, vérifie l'interface VPN : |
+
+```bash
+ip -4 addr show tun0
+# Attendu : une adresse du type 10.10.14.x
+```
+
+| Étape | Commande / action |
+|---|---|
+| B4 | Clique sur **Spawn Target**, note l'IP cible, puis teste la connexion : |
+
+```bash
+ping -c 2 IP_CIBLE
+curl -sI http://IP_CIBLE:5601/ | head -n 1
+nmap -Pn -p 5601 IP_CIBLE
+```
+
+| Étape | Commande / action |
+|---|---|
+| B5 | Ouvre ton navigateur sur `http://IP_CIBLE:5601` |
+
+## Réglages Kibana à faire à chaque nouvelle cible
+
+| Étape | Action | Résultat attendu |
+|---|---|---|
+| K1 | Menu latéral (☰ en haut à gauche) → **Discover** | La page de recherche s'ouvre |
+| K2 | Icône **calendrier** (en haut à droite) → saisir **15** / **Years ago** → **Apply** (ou choisir « Last 15 years ») | Les logs de mars 2023 apparaissent |
+| K3 | Ouvre `http://IP_CIBLE:5601/app/management/kibana/settings`, cherche **Timezone for date formatting** (`dateFormat:tz`), choisis **Europe/Copenhagen**, **Save changes** | Les horodatages correspondent à ceux du cours |
+| K4 | En haut à gauche de Discover, menu déroulant des **data views** : choisis `windows*` (Sysmon, PowerShell, audit Windows) ou `zeek*` (réseau) | Le bon index est interrogé |
+| K5 | Pour **ajouter une colonne** : survole un champ dans la liste de gauche → clique sur **+** (add) | Le champ s'affiche dans le tableau |
+| K6 | Pour **trier** : survole l'en-tête de colonne (ex. `@timestamp`) → flèche de tri | Tri croissant ou décroissant |
 
 ---
 
@@ -28,7 +101,7 @@
 ### Définition du Threat Hunting
 - **Dwell time** (temps de séjour) = durée entre la compromission réelle et sa détection. Il se compte généralement en **semaines, voire en mois**.
 - Les défenses classiques (réactives) ne suffisent plus. Le threat hunting ajoute une approche **proactive**.
-- **Threat hunting** = pratique **active, menée par un humain**, souvent **basée sur des hypothèses**, qui fouille les données du réseau pour trouver des menaces furtives qui échappent aux outils de sécurité existants.
+- **Threat hunting** = pratique **active, menée par un humain**, souvent **basée sur des hypothèses**, qui fouille les données du réseau pour trouver des menaces furtives que les outils de sécurité existants ratent.
 - **Objectif principal** : réduire le dwell time en repérant l'attaquant le plus tôt possible dans la **Cyber Kill Chain**.
 
 ### Déroulé général
@@ -53,10 +126,10 @@
 |---|---|
 | **Préparation** | Définir des règles d'engagement claires (quand et comment intervenir). Peut être intégré aux procédures d'IR existantes |
 | **Détection & Analyse** | Aide à confirmer si des IoCs correspondent à un vrai incident et trouve des IoCs manqués |
-| **Confinement, Éradication, Récupération** | Rôle variable selon l'organisation (pas une pratique universelle). Défini dans les procédures |
+| **Confinement, Éradication, Récupération** | Rôle variable selon l'organisation. Défini dans les procédures |
 | **Post-incident** | Recommandations pour renforcer la posture de sécurité |
 
-🔑 Intégrer ou séparer le hunting et l'incident handling est une **décision stratégique** propre à chaque organisation. Ils **ne fonctionnent pas toujours séparément**.
+🔑 Intégrer ou séparer le hunting et l'incident handling est une **décision stratégique** propre à chaque organisation, selon son paysage de menaces et ses risques.
 
 ### Structure d'une équipe de threat hunting
 | Rôle | Mission |
@@ -83,7 +156,7 @@
 Le risk assessment sert à :
 - **Prioriser** la chasse (assets critiques = « crown jewels »)
 - **Comprendre** le paysage de menaces et construire des hypothèses
-- **Mettre en évidence** les vulnérabilités (ex. : vulnérabilité d'escalade de privilèges, donc on cherche des anomalies de niveaux de privilège)
+- **Mettre en évidence** les vulnérabilités (ex. : faille d'escalade de privilèges, donc on cherche des anomalies de niveaux de privilège)
 - **Orienter** l'usage de la threat intelligence
 - **Affiner** les plans d'IR
 - **Améliorer** les contrôles de sécurité
@@ -92,16 +165,63 @@ Outils cités : scanners de vulnérabilités, outils de pentest, plateformes de 
 
 ## ✅ Questions de la page 1
 
-| # | Question (FR) | Réponse (FR) | **Réponse à mettre sur HTB** |
-|---|---|---|---|
-| 1 | Le threat hunting s'utilise ... (« proactively » / « reactively » / « proactively and reactively ») | De façon proactive **et** réactive | **`proactively and reactively`** |
-| 2 | Le threat hunting et l'incident handling fonctionnent toujours de manière indépendante. (True/False) | Faux | **`false`** |
-| 3 | Le threat hunting et l'incident response peuvent être menés simultanément. (True/False) | Vrai | **`true`** |
+### ❓ Question 1
 
-### 🧭 Comment arriver aux réponses
-- **Q1** : la section « Key facets » liste deux facettes : une stratégie **proactive** (hypothèses, TTPs) et une réponse **réactive** (artefacts d'un incident vérifié). Les deux existent, donc la bonne option est la troisième.
-- **Q2** : le mot clé est « **always** ». La fin de la section « Relationship Between Incident Handling & Threat Hunting » dit que l'intégration ou la séparation dépend de l'organisation. Une affirmation avec « toujours » est donc fausse.
-- **Q3** : la section « When Should We Hunt? » cite « During an Incident Response Activity » : on chasse en parallèle de l'IR pour trouver d'autres systèmes compromis.
+| | |
+|---|---|
+| **Question (EN)** | Threat hunting is used ... Choose one: "proactively", "reactively", "proactively and reactively" |
+| **Question (FR)** | Le threat hunting s'utilise ... (de façon proactive / réactive / proactive et réactive) |
+| **Réponse (FR)** | De façon proactive **et** réactive |
+| **Réponse à mettre sur HTB** | `proactively and reactively` |
+
+**🧭 Procédure (aucune cible nécessaire, tout est dans le texte du cours)**
+
+1. Ouvre la page **Threat Hunting Fundamentals** → section **Threat Hunting Definition**.
+2. Descends jusqu'à la liste **« Key facets of threat hunting include »**.
+3. Repère les deux premières puces :
+   - « An offensive, **proactive** strategy… based on hypotheses, attacker TTPs, and intelligence »
+   - « An offensive, **reactive** response… based on evidence and intelligence »
+4. Deux facettes existent, donc la bonne option est la troisième.
+5. Saisis exactement : `proactively and reactively`
+
+✔️ **Vérification** : la page 4 confirme, avec « Threat Hunting (Reactive and Proactive) ».
+
+---
+
+### ❓ Question 2
+
+| | |
+|---|---|
+| **Question (EN)** | Threat hunting and incident handling are two processes that always function independently. True/False |
+| **Question (FR)** | Le threat hunting et l'incident handling fonctionnent toujours de façon indépendante. Vrai/Faux |
+| **Réponse (FR)** | Faux |
+| **Réponse à mettre sur HTB** | `false` |
+
+**🧭 Procédure**
+
+1. Repère le mot clé de l'énoncé : **« always »** (toujours). Une affirmation absolue se vérifie par un seul contre-exemple.
+2. Va à la section **The Relationship Between Incident Handling & Threat Hunting**.
+3. Lis la phrase de fin : intégrer ou séparer les deux processus est « a strategic decision, contingent upon each organization's unique threat landscape, risk ».
+4. Lis aussi le début de la section : les organisations peuvent **intégrer** le hunting dans leurs procédures d'incident handling. Les deux ne sont donc pas toujours indépendants.
+5. Saisis exactement : `false`
+
+---
+
+### ❓ Question 3
+
+| | |
+|---|---|
+| **Question (EN)** | Threat hunting and incident response can be conducted simultaneously. True/False |
+| **Question (FR)** | Le threat hunting et l'incident response peuvent être menés en même temps. Vrai/Faux |
+| **Réponse (FR)** | Vrai |
+| **Réponse à mettre sur HTB** | `true` |
+
+**🧭 Procédure**
+
+1. Va à la section **When Should We Hunt?**.
+2. Repère la puce **« During an Incident Response Activity »**.
+3. Lis : pendant que l'IR gère le confinement, l'éradication et la récupération, il faut **« simultaneously conduct threat hunting across the network »** pour trouver d'autres systèmes compromis.
+4. Saisis exactement : `true`
 
 ---
 
@@ -138,25 +258,35 @@ Le processus se déroule en **7 étapes** (cycle continu) :
 
 ## ✅ Question de la page 2
 
-| Question (FR) | Réponse (FR) | **Réponse à mettre sur HTB** |
-|---|---|---|
-| On peut formuler des hypothèses qui ne sont pas testables. (True/False) | Faux | **`false`** |
+### ❓ Question 1
 
-### 🧭 Comment arriver à la réponse
-Dans l'étape « Formulating Hypotheses », le cours dit : *« We strive to make these hypotheses testable »* et l'exemple précise que l'hypothèse doit être **spécifique et testable**. Une hypothèse non testable ne dit pas où chercher ni quoi chercher, donc elle est **fausse** comme option.
+| | |
+|---|---|
+| **Question (EN)** | It is OK to formulate hypotheses that are not testable. True/False |
+| **Question (FR)** | Il est acceptable de formuler des hypothèses non testables. Vrai/Faux |
+| **Réponse (FR)** | Faux |
+| **Réponse à mettre sur HTB** | `false` |
+
+**🧭 Procédure**
+
+1. Va à l'étape **Formulating Hypotheses** (2e étape de la liste).
+2. Lis la phrase : « We strive to make these hypotheses **testable** to guide us where to search and what to look for ».
+3. Lis l'exemple juste en dessous : « The hypothesis should be **specific and testable** ».
+4. Une hypothèse non testable ne dit ni où chercher ni quoi chercher. L'affirmation de l'énoncé est donc fausse.
+5. Saisis exactement : `false`
 
 ---
 
 # Page 3 — Threat Hunting Glossary
 
-> Cette page ne contient **aucune question**. C'est une page de vocabulaire à connaître pour les pages suivantes et pour l'examen.
+> Cette page ne contient **aucune question**. Elle contient le vocabulaire utilisé dans les pages suivantes et à l'examen.
 
 ## 📘 Résumé : les définitions essentielles
 
 | Terme | Définition en français |
 |---|---|
 | **Adversary** (adversaire) | Entité qui cherche à s'infiltrer dans l'organisation pour atteindre ses objectifs (gain financier, informations internes, propriété intellectuelle). Catégories : cybercriminels, menaces internes (insiders), hacktivistes, acteurs étatiques |
-| **APT** (Advanced Persistent Threat) | Groupe très organisé ou étatique, avec beaucoup de ressources, actif sur de longues périodes. « Advanced » renvoie à la planification stratégique sophistiquée (pas forcément à une technique avancée). « Persistent » renvoie à leur obstination |
+| **APT** (Advanced Persistent Threat) | Groupe très organisé ou étatique, avec beaucoup de ressources, actif sur de longues périodes. « Advanced » renvoie à la planification stratégique sophistiquée, sans exiger de technique avancée. « Persistent » renvoie à leur obstination |
 | **TTPs** | Signature opérationnelle d'un adversaire |
 | ↳ **Tactics** | Objectifs stratégiques : le **pourquoi** |
 | ↳ **Techniques** | Méthodes générales : le **comment** |
@@ -167,11 +297,11 @@ Dans l'étape « Formulating Hypotheses », le cours dit : *« We strive to make
 | **IOCs** (Indicators of Compromise) | Traces numériques d'une intrusion : hashes, IPs, URLs, domaines, noms d'exécutables/scripts |
 
 ### La Pyramid of Pain (David Bianco)
-Plus on monte, plus l'indicateur est **difficile à obtenir pour le défenseur**, mais plus il est **coûteux à changer pour l'attaquant**.
+Plus on monte, plus l'indicateur est **difficile à obtenir pour le défenseur**, et plus il est **coûteux à changer pour l'attaquant**.
 
 ```
             /\
-           /TTPs\            ← Tough (très dur pour l'attaquant)
+           /TTPs\            ← Tough
           /------\
          / Tools  \          ← Challenging
         /----------\
@@ -185,18 +315,16 @@ Plus on monte, plus l'indicateur est **difficile à obtenir pour le défenseur**
 /       Hash Values        \ ← Trivial
 ```
 
-| Niveau | Pourquoi c'est fiable ou non |
+| Niveau | Pourquoi |
 |---|---|
 | **Hash** | Un seul octet modifié change le hash. Trivial à changer, peu fiable |
 | **IP** | VPN, proxy, TOR, spoofing. Facile à changer |
 | **Domaine** | DGA (algorithmes de génération de domaines), DNS dynamique. Simple à changer |
 | **Artefacts réseau/hôte** | Motifs de trafic, clés de registre, chemins de fichiers, processus. Gênant à changer sans casser l'opération |
-| **Outils** | Malware, exploits, frameworks C2. Difficile à remplacer (mais les adversaires avancés les personnalisent) |
+| **Outils** | Malware, exploits, frameworks C2. Difficile à remplacer (les adversaires avancés les personnalisent) |
 | **TTPs** | Le sommet : l'attaquant doit changer sa façon de travailler |
 
 ### Le Diamond Model (modèle du diamant)
-4 sommets reliés entre eux :
-
 | Sommet | Rôle |
 |---|---|
 | **Adversary** | Qui attaque |
@@ -206,7 +334,7 @@ Plus on monte, plus l'indicateur est **difficile à obtenir pour le défenseur**
 
 *Exemple du cours* : une institution financière (Victim) est ciblée par un groupe cybercriminel (Adversary) via du spear-phishing (Capability) envoyé depuis un botnet (Infrastructure) pour livrer un cheval de Troie bancaire.
 
-🔑 **Comparaison** : la Cyber Kill Chain décrit les **étapes** d'une attaque. Le Diamond Model décrit les **composants** de l'intrusion et leurs relations. Les deux se complètent.
+🔑 La Cyber Kill Chain décrit les **étapes** d'une attaque. Le Diamond Model décrit les **composants** de l'intrusion et leurs relations. Les deux se complètent.
 
 ---
 
@@ -240,9 +368,9 @@ La CTI fait passer la défense d'un mode réactif à un mode **proactif et antic
 Les deux se renforcent : la CTI informe le hunting, et les résultats du hunting enrichissent la CTI.
 
 ### Les 3 niveaux de renseignement
-| Niveau | Public | Contenu | Question à laquelle il répond |
+| Niveau | Public | Contenu | Répond à |
 |---|---|---|---|
-| **Strategic** | Dirigeants (C-suite, VPs) | Vue d'ensemble dans le temps, TTPs/MO, alignement avec les risques de l'entreprise | **Qui ? Pourquoi ?** |
+| **Strategic** | Dirigeants (C-suite, VPs) | Vue d'ensemble dans le temps, TTPs/MO, alignement avec les risques | **Qui ? Pourquoi ?** |
 | **Operational** | Management intermédiaire | Détail des campagnes, TTPs | **Comment ? Où ?** |
 | **Tactical** | Défenseurs réseau / SOC | Actions immédiates, détails techniques (IPs, domaines, hashes, clés de registre, mutex) | Quoi bloquer/détecter maintenant |
 
@@ -250,28 +378,84 @@ Les deux se renforcent : la CTI informe le hunting, et les résultats du hunting
 
 ### Comment traiter un rapport de CTI tactique (6 étapes)
 1. **Comprendre** la portée et le récit du rapport (la menace nous concerne-t-elle ?)
-2. **Repérer et classer** les IoCs : réseau (IPs, domaines), hôte (hashes, clés de registre), email (adresses, objets), + mutex, certificats SSL, User-Agents, etc.
+2. **Repérer et classer** les IoCs : réseau (IPs, domaines), hôte (hashes, clés de registre), email (adresses, objets), + mutex, certificats SSL, User-Agents
 3. **Comprendre le cycle de vie** de l'attaque (TTPs mappés sur **MITRE ATT&CK**)
 4. **Analyser et valider** les IoCs : VirusTotal, AlienVault OTX, âge de l'IoC, contexte (une IP C2 peut aussi héberger des sites légitimes), taux de faux positifs
 5. **Intégrer** dans l'infrastructure : règles pare-feu, EDR, IDS/IPS, passerelle mail. Parfois **alerter plutôt que bloquer** pour ne pas casser un service critique. Documenter via le change management
-6. **Chasser** de façon proactive (IoCs + TTPs, ex. PowerShell suspect) puis **surveiller en continu** et **partager** (ISACs/ISAOs)
+6. **Chasser** de façon proactive (IoCs + TTPs, ex. PowerShell suspect), **surveiller** en continu et **partager** (ISACs/ISAOs)
 
 ## ✅ Questions de la page 4
 
-| # | Question (FR) | Réponse (FR) | **Réponse à mettre sur HTB** |
-|---|---|---|---|
-| 1 | Il est utile que la CTI fournisse au SOC une seule IP sans contexte. (True/False) | Faux | **`false`** |
-| 2 | Quand un incident survient et que la CTI est prévenue, que doit-elle faire ? (« Do Nothing » / « Reach out to the Incident Handler/Incident Responder » / « Provide IOCs on all research being conducted, regardless if the IOC is verified ») | Contacter l'Incident Handler / Incident Responder | **`Reach out to the Incident Handler/Incident Responder`** |
-| 3 | Même question avec d'autres options (« Provide IOCs on all research... regardless if verified » / « Do Nothing » / « Provide further IOCs and TTPs associated with the incident ») | Fournir d'autres IoCs et TTPs associés à l'incident | **`Provide further IOCs and TTPs associated with the incident`** |
-| 4 | Une CTI bien conçue et analysée peut ... (« be used for security awareness » / « be used for fine-tuning network segmentation » / « provide insight into adversary operations ») | Donner un aperçu des opérations de l'adversaire | **`provide insight into adversary operations`** |
+### ❓ Question 1
 
-### 🧭 Comment arriver aux réponses
-- **Q1** : formule du glossaire « **Data + contexte = indicateur** ». Une IP seule n'a pas de contexte, donc elle est peu utile. De plus, le principe d'**actionabilité** impose de donner des directives claires.
-- **Q2 et Q3** : la même question avec des listes différentes. Il faut choisir **l'option qui existe dans la liste ET qui respecte les principes de la CTI** :
-  - Si « Reach out to the Incident Handler » est proposé, c'est la bonne réponse (la CTI doit être en contact avec l'IR).
-  - Si cette option n'est pas proposée, la bonne est « Provide further IOCs and TTPs associated with the incident ».
-  - L'option « IOCs ... regardless if verified » est toujours fausse (principe d'**exactitude**). « Do Nothing » est toujours fausse.
-- **Q4** : la section « Criteria Of CTI » dit que la CTI « provides visibility into adversary operations ». Les deux autres options ne figurent pas dans le cours comme apports de la CTI.
+| | |
+|---|---|
+| **Question (EN)** | It's useful for the CTI team to provide a single IP with no context to the SOC team. True/False |
+| **Question (FR)** | Il est utile que la CTI donne au SOC une seule IP sans contexte. Vrai/Faux |
+| **Réponse (FR)** | Faux |
+| **Réponse à mettre sur HTB** | `false` |
+
+**🧭 Procédure**
+
+1. Va à la page **Threat Hunting Glossary**, définition **Indicator**.
+2. Lis : « Isolated technical data lacking relevant context holds limited or negligible value for network defenders ».
+3. Retiens la formule : **Data + context = indicator**. Une IP seule n'a pas de contexte.
+4. Recoupe avec le principe d'**Actionability** (page 4) : l'info doit donner des directives claires.
+5. Saisis exactement : `false`
+
+---
+
+### ❓ Question 2
+
+| | |
+|---|---|
+| **Question (EN)** | When an incident occurs on the network and the CTI team is made aware, what should they do? Options : "Do Nothing", "Reach out to the Incident Handler/Incident Responder", "Provide IOCs on all research being conducted, regardless if the IOC is verified" |
+| **Réponse (FR)** | Contacter l'Incident Handler / Incident Responder |
+| **Réponse à mettre sur HTB** | `Reach out to the Incident Handler/Incident Responder` |
+
+**🧭 Procédure**
+
+1. Élimine d'abord les mauvaises options :
+   - `Do Nothing` : contraire à l'objectif d'une CTI proactive.
+   - `Provide IOCs ... regardless if the IOC is verified` : contraire au principe d'**Accuracy** (vérifier avant de diffuser).
+2. Il reste `Reach out to the Incident Handler/Incident Responder`. Le cours (section *Difference Between Threat Intelligence & Threat Hunting*) indique que la CTI et les équipes opérationnelles échangent leurs informations.
+3. Saisis exactement : `Reach out to the Incident Handler/Incident Responder`
+
+---
+
+### ❓ Question 3 (même question, autres options)
+
+| | |
+|---|---|
+| **Question (EN)** | When an incident occurs on the network and the CTI team is made aware, what should they do? Options : "Provide IOCs on all research being conducted, regardless if the IOC is verified", "Do Nothing", "Provide further IOCs and TTPs associated with the incident" |
+| **Réponse (FR)** | Fournir d'autres IoCs et TTPs associés à l'incident |
+| **Réponse à mettre sur HTB** | `Provide further IOCs and TTPs associated with the incident` |
+
+**🧭 Procédure**
+
+1. Lis bien les options : la question est identique, la liste change.
+2. Élimine `Do Nothing` et `Provide IOCs ... regardless if the IOC is verified` (principe d'**Accuracy**).
+3. Il reste `Provide further IOCs and TTPs associated with the incident`, qui respecte les 4 critères (pertinent, actuel, actionnable, exact).
+4. Saisis exactement : `Provide further IOCs and TTPs associated with the incident`
+
+🔑 **Règle pour les deux versions** : si l'option « Reach out to the Incident Handler/Incident Responder » est proposée, prends-la. Sinon, prends « Provide further IOCs and TTPs… ».
+
+---
+
+### ❓ Question 4
+
+| | |
+|---|---|
+| **Question (EN)** | Cyber Threat Intelligence, if curated and analyzed properly, can ... ? Options : "be used for security awareness", "be used for fine-tuning network segmentation", "provide insight into adversary operations" |
+| **Réponse (FR)** | Donner un aperçu des opérations de l'adversaire |
+| **Réponse à mettre sur HTB** | `provide insight into adversary operations` |
+
+**🧭 Procédure**
+
+1. Va à la section **Criteria Of Cyber Threat Intelligence**.
+2. Lis : les 4 éléments (Actionable, Timely, Relevant, Accurate) forment la base d'une CTI robuste « that ultimately provides **visibility into adversary operations** ».
+3. Les deux autres options ne figurent pas dans le cours comme apports de la CTI.
+4. Saisis exactement : `provide insight into adversary operations`
 
 ---
 
@@ -300,83 +484,205 @@ Les deux se renforcent : la CTI informe le hunting, et les résultats du hunting
 - **Logs** (Elastic Stack comme SIEM) :
   - `windows*` : logs d'audit Windows + **Sysmon** + logs **PowerShell** (~118 975 logs)
   - `zeek*` : logs réseau **Zeek** (~332 261 logs)
-- Les données CTI datent de **mars 2023**, donc il faut régler la période sur **« last 15 years »**.
+- Les données CTI datent de **mars 2023** : période à régler sur **« last 15 years »**.
 
-### ⚙️ Préparation de Kibana
-1. Lancer la cible (**Spawn Target**), attendre **3 à 5 minutes**.
-2. Ouvrir `http://[IP cible]:5601` → menu latéral → **Discover**.
-3. Icône calendrier → **last 15 years** → **Apply**.
-4. Fuseau horaire : `http://[IP cible]:5601/app/management/kibana/settings` → **Europe/Copenhagen**.
-
-### ⌨️ Les événements Sysmon à connaître
-| Event ID | Nom | Utilité dans le cours |
+### ⌨️ Les événements à connaître
+| Event ID | Nom | Utilité |
 |---|---|---|
-| **1** | Process creation | Voir les processus lancés, leurs arguments, leur parent |
-| **3** | Network connection | Connexions réseau (les navigateurs sont souvent exclus de la config) |
-| **11** | File create | Création de fichiers (`Zone.Identifier` = fichier venant d'Internet) |
-| **15** | FileCreateStreamHash | Téléchargement depuis un navigateur |
-| **22** | DNSEvent | Requêtes DNS depuis l'hôte |
-| (Windows) **4624 / 4625** | Logon réussi / échoué | Brute force, mouvement latéral |
+| **1** | Sysmon : Process creation | Processus lancés, arguments, parent |
+| **3** | Sysmon : Network connection | Connexions réseau (navigateurs souvent exclus de la config) |
+| **11** | Sysmon : File create | Création de fichiers (`Zone.Identifier` = fichier venant d'Internet) |
+| **13** | Sysmon : Registry value set | Modifications de registre (persistance Run keys) |
+| **15** | Sysmon : FileCreateStreamHash | Téléchargement depuis un navigateur |
+| **22** | Sysmon : DNSEvent | Requêtes DNS |
+| **4624 / 4625** | Windows Security : logon réussi / échoué | Brute force, mouvement latéral |
+| **4104** | PowerShell : Script Block Logging | Contenu des scripts PowerShell exécutés |
 
-### 🔎 Déroulé de la chasse (hypothèse : phishing réussi avec un OneNote malveillant)
+### 🔎 Déroulé de la chasse du cours (hypothèse : phishing réussi avec un OneNote malveillant)
 
 | Étape | Requête KQL | Ce qu'on découvre |
 |---|---|---|
 | 1. Téléchargement du fichier | `event.code:15 AND file.name:*invoice.one` | 3 résultats. Téléchargé par **MSEdge** dans le dossier Downloads de **Bob**. Horodatage : **26 mars 2023 @ 22:05:47** |
-| 2. Confirmation | `event.code:11 AND file.name:invoice.one*` | Machine **WS001**, avec le `Zone.Identifier` (le `*` est à la fin car le nom contient `:Zone.Identifier`). IP **192.168.28.130** |
-| 3. IP de WS001 | `event.code:3 AND host.hostname:WS001` (regarder `source.ip`) | Confirme l'IP |
+| 2. Confirmation | `event.code:11 AND file.name:invoice.one*` | Machine **WS001**, avec un `Zone.Identifier` (le `*` est à la fin car le nom contient `:Zone.Identifier`). IP **192.168.28.130** |
+| 3. IP de WS001 | `event.code:3 AND host.hostname:WS001` (champ `source.ip`) | Confirme l'IP |
 | 4. DNS Zeek (22:05:00 à 22:05:48) | `source.ip:192.168.28.130 AND dns.question.name:*` | Filtrer le bruit (google.com, etc.). On voit **mail.google.com**, puis **file.io**, puis SmartScreen |
 | 5. IPs de file.io | Champ `dns.answers.data` | `34.197.10.85`, `3.213.216.16` |
-| 6. Connexions vers ces IPs | Recherche de `destination.ip` sur ces IPs | Connexions sur le port 443 : **Bob a téléchargé `invoice.one` depuis file.io** |
+| 6. Connexions vers ces IPs | Recherche de `destination.ip` sur ces IPs | Port 443 : **Bob a téléchargé `invoice.one` depuis file.io** |
 | 7. Ouverture du fichier | `event.code:1 AND process.command_line:*invoice.one*` | OneNote lance le fichier ~**6 secondes** après le téléchargement |
 | 8. Enfants de OneNote | `event.code:1 AND process.parent.name:"ONENOTE.EXE"` | `OneNoteM.exe` (normal) et **`cmd.exe` qui exécute `invoice.bat`** |
 | 9. Enfants du batch | `event.code:1 AND process.parent.command_line:*invoice.bat*` | **PowerShell** qui télécharge un script **Pastebin** (PID **9944**) |
-| 10. Activité PowerShell | `process.pid:"9944" and process.name:"powershell.exe"` | 17 événements : script de brute force de mots de passe, dépôt d'un EXE, DNS **ngrok**, connexions vers le C2 (IP `18.158.249.75`), requêtes vers **DC1** |
+| 10. Activité PowerShell | `process.pid:"9944" and process.name:"powershell.exe"` | 17 événements : script de brute force, dépôt d'un EXE, DNS **ngrok**, connexions vers le C2 (`18.158.249.75`), requêtes vers **DC1** |
 | 11. Zeek sur l'IP C2 | `destination.ip:18.158.249.75` | Activité qui continue le lendemain. L'IP de ngrok change ensuite (`3.125.102.39`) |
-| 12. Le dropper | `process.name:"default.exe"` | Exécuté. Dépose **`svchost.exe`**, **`SharpHound.exe`**, `payload.exe`, un **fichier VBS**… |
+| 12. Le dropper | `process.name:"default.exe"` | Exécuté. Dépose **`svchost.exe`**, **`SharpHound.exe`**, `payload.exe`, un **fichier VBS** |
 | 13. SharpHound | `process.name:"SharpHound.exe"` | Exécuté **2 fois** (~2 minutes d'écart), collecte `all` : cartographie de l'Active Directory |
-| 14. Hash connu | `process.hash.sha256:018d37cb…` | Hash présent sur **WS001** et **PKI** (compromission du serveur PKI) |
-| 15. Mouvement latéral | Parent = **PSEXESVC** sur PKI | Utilisation de **PsExec**. Utilisateur compromis : **svc-sql1** |
+| 14. Hash connu | `process.hash.sha256:018d37cb…` | Hash présent sur **WS001** et **PKI** |
+| 15. Mouvement latéral | Parent = **PSEXESVC** sur PKI | **PsExec**. Utilisateur compromis : **svc-sql1** |
 | 16. Brute force | `(event.code:4624 OR event.code:4625) AND winlog.event_data.LogonType:3 AND source.ip:192.168.28.130` | 2 échecs sur **administrator**, puis des connexions réussies de **svc-sql1** (le 28 mars) |
 
-### Champs Kibana à ajouter en colonnes (très utile)
-`process.name`, `process.args`, `process.pid`, `event.code`, `file.path`, `dns.question.name`, `destination.ip`, `source.ip`, `host.hostname`, `dns.answers.data`
-
-🔑 **Points d'analyse à retenir**
-- Le rapport CTI parle de `mega.io` et `transfer.sh`, alors que l'incident réel passe par **`file.io`**. Les IoCs d'un rapport sont donc **incomplets**, et la chasse comportementale (TTPs) trouve ce que la chasse par IoCs rate.
+🔑 **Points d'analyse**
+- Le rapport CTI cite `mega.io` et `transfer.sh`, alors que l'incident réel passe par **`file.io`**. Les IoCs d'un rapport sont incomplets, et la chasse par TTPs trouve ce que la chasse par IoCs rate.
 - Les connexions réseau des navigateurs sont exclues de la config Sysmon. Les **logs Zeek** comblent ce manque.
-- Il y a un délai entre certaines actions, ce qui suggère une **intervention humaine** (pas un simple script).
+- Les délais entre certaines actions suggèrent une **intervention humaine**.
 
 ## ✅ Questions de la page 5
 
-| # | Question (FR) | Réponse (FR) | **Réponse à mettre sur HTB** |
-|---|---|---|---|
-| 1 | Dans la partie sur `default.exe`, un fichier VBS est mentionné. Donne son nom complet avec l'extension | Le fichier VBS est `XceGuhkzaTrOy.vbs` | **`XceGuhkzaTrOy.vbs`** |
-| 2 | Stuxbot a téléversé et exécuté mimikatz. Donne les arguments du processus (ce qui suit `.\mimikatz.exe`) | Commande DCSync sur le domaine eagle.local | **`lsadump::dcsync /domain:eagle.local /all /csv, exit`** |
-| 3 | Du code PowerShell chargé en mémoire scanne les partages réseau. Avec les logs PowerShell, trouve de quel outil de hacking connu il provient (format : `P____V___`) | PowerView | **`PowerView`** |
+> ⚠️ Le cours ne détaille pas les requêtes exactes pour ces 3 questions. Les **réponses** sont validées. Les **requêtes** sont reconstituées à partir de la logique du cours (confiance : bonne pour Q1 et Q2, moyenne pour Q3). Un plan B est donné à chaque fois.
 
-### 🧭 Comment arriver aux réponses
+### ❓ Question 1 — Le fichier VBS
 
-> ⚠️ **Honnêteté** : le cours ne détaille pas les requêtes exactes pour ces 3 questions. Les méthodes ci-dessous sont reconstituées à partir de la logique du cours (confiance : bonne pour Q1 et Q2, moyenne pour Q3). À vérifier sur la cible, car les noms de champs peuvent légèrement varier.
+| | |
+|---|---|
+| **Question (EN)** | In the part where default.exe is under investigation, a VBS file is mentioned. Enter its full name, including the extension. |
+| **Question (FR)** | Dans la partie sur `default.exe`, un fichier VBS est mentionné. Donne son nom complet avec l'extension. |
+| **Réponse (FR)** | `XceGuhkzaTrOy.vbs` |
+| **Réponse à mettre sur HTB** | `XceGuhkzaTrOy.vbs` |
 
-**Q1 — le fichier VBS**
-1. Lancer la requête du cours : `process.name:"default.exe"`
-2. Ajouter les colonnes `file.path`, `event.code`, `process.name`
-3. Faire défiler vers le haut (le cours précise : *« If we scroll up there's further activity… including the uploading of "payload.exe", a VBS file… »*)
-4. Repérer la ligne `file.path` qui se termine par `.vbs` (événements `event.code:11`, création de fichier) et recopier le nom du fichier.
-- Variante plus directe : `event.code:11 AND file.name:*.vbs`
+**🧭 Procédure complète**
 
-**Q2 — arguments de Mimikatz**
-1. Requête : `process.name:"mimikatz.exe"`
-2. Ajouter la colonne `process.args`
-3. Les arguments apparaissent après `mimikatz.exe`. Recopier **exactement** la valeur (attention aux espaces et à la virgule avant `exit`).
-- Ce que ça fait : `lsadump::dcsync` simule un contrôleur de domaine pour demander la réplication des hashes de mots de passe de **tous** les comptes (`/all`), au format CSV. C'est une technique de vol d'identifiants (MITRE T1003.006).
+**Partie 0 : connexion à la cible**
 
-**Q3 — l'outil PowerShell (PowerView)**
-1. Les logs PowerShell sont dans l'index `windows*` et correspondent au **Script Block Logging**, **event ID 4104** (le contenu des scripts exécutés, y compris ceux chargés en mémoire).
-2. Requête : `event.code:4104` puis chercher des mots typiques du scan de partages, par exemple `Invoke-ShareFinder` ou `Find-DomainShare`.
-3. Ouvrir le document : le code du script (champ du type `powershell.file.script_block_text` ou `message`) contient les fonctions d'origine, et l'en-tête/les noms de fonctions renvoient à **PowerView** (outil de PowerSploit pour la reconnaissance Active Directory).
-- Format demandé `P____V___` : P + 4 lettres + V + 3 lettres = **PowerView**.
+1. Sur la page, clique sur **Spawn Target** et note l'IP (`IP_CIBLE`).
+2. Connexion, au choix :
+   - **Pwnbox** : clique sur *View Linux Pwnbox*, ouvre Firefox.
+   - **VPN** :
+     ```bash
+     sudo openvpn ~/Downloads/NOM_DU_FICHIER.ovpn     # terminal 1, laisser ouvert
+     ip -4 addr show tun0                              # terminal 2 : doit afficher une IP 10.10.14.x
+     ping -c 2 IP_CIBLE
+     ```
+3. Teste Kibana (attendre 3 à 5 minutes après le spawn) :
+   ```bash
+   curl -sI http://IP_CIBLE:5601/ | head -n 1
+   ```
+4. Ouvre `http://IP_CIBLE:5601` dans le navigateur.
+5. Règle le fuseau : `http://IP_CIBLE:5601/app/management/kibana/settings` → **Europe/Copenhagen** → **Save changes**.
+
+**Partie 1 : la recherche**
+
+6. Menu ☰ → **Discover**. Data view : `windows*`.
+7. Calendrier → **15 Years ago** → **Apply**.
+8. Saisis dans la barre de recherche :
+   ```
+   process.name:"default.exe"
+   ```
+9. Ajoute les colonnes (survol du champ à gauche → **+**) : `process.name`, `event.code`, `file.path`, `destination.ip`, `dns.question.name`. Tu dois voir ~**68 hits**.
+10. Fais défiler le tableau vers le haut et le bas. Le cours indique qu'on y voit le dépôt de `payload.exe`, `svchost.exe`, `SharpHound.exe` et **un fichier VBS**.
+11. Lis la colonne `file.path` : repère la ligne qui se termine par `.vbs`. Le nom est `XceGuhkzaTrOy.vbs`.
+
+✔️ **Plan B** (recherche directe) :
+```
+event.code:11 AND file.name:*.vbs
+```
+Puis vérifie que `process.name` vaut `default.exe`.
+
+**Partie 2 : validation**
+
+12. Retourne sur la page HTB, saisis `XceGuhkzaTrOy.vbs` (respecte les majuscules et minuscules) et clique sur **Submit**.
+
+---
+
+### ❓ Question 2 — Arguments de Mimikatz
+
+| | |
+|---|---|
+| **Question (EN)** | Stuxbot uploaded and executed mimikatz. Provide the process arguments (what is after .\mimikatz.exe, ...) as your answer. |
+| **Question (FR)** | Stuxbot a téléversé et exécuté mimikatz. Donne les arguments du processus (ce qui suit `.\mimikatz.exe`). |
+| **Réponse (FR)** | Commande DCSync sur le domaine eagle.local |
+| **Réponse à mettre sur HTB** | `lsadump::dcsync /domain:eagle.local /all /csv, exit` |
+
+**🧭 Procédure complète**
+
+**Partie 0 : connexion à la cible** (identique à la Question 1, étapes 1 à 7)
+
+1. **Spawn Target**, note `IP_CIBLE`.
+2. Connexion Pwnbox, ou VPN :
+   ```bash
+   sudo openvpn ~/Downloads/NOM_DU_FICHIER.ovpn
+   ip -4 addr show tun0
+   ping -c 2 IP_CIBLE
+   curl -sI http://IP_CIBLE:5601/ | head -n 1
+   ```
+3. Ouvre `http://IP_CIBLE:5601` → **Discover** → data view `windows*` → **15 Years ago** → **Apply**.
+4. Fuseau **Europe/Copenhagen** (`/app/management/kibana/settings`).
+
+**Partie 1 : la recherche**
+
+5. Requête :
+   ```
+   process.name:"mimikatz.exe"
+   ```
+6. Ajoute les colonnes : `process.name`, `process.args`, `process.command_line`, `host.hostname`, `user.name`.
+7. Ouvre un document (flèche à gauche de la ligne) pour voir tous les champs.
+8. Lis `process.args` : les valeurs apparaissent après `mimikatz.exe`. Recopie-les **exactement**, dans l'ordre, en gardant la virgule avant `exit` :
+   ```
+   lsadump::dcsync /domain:eagle.local /all /csv, exit
+   ```
+
+✔️ **Plan B** si `process.name` ne renvoie rien :
+```
+process.command_line:*mimikatz*
+```
+ou `event.code:1 AND process.command_line:*dcsync*`.
+
+**Partie 2 : comprendre la commande**
+
+| Élément | Signification |
+|---|---|
+| `lsadump::dcsync` | Module Mimikatz qui imite un contrôleur de domaine pour demander la réplication des hashes de mots de passe (MITRE T1003.006) |
+| `/domain:eagle.local` | Domaine ciblé |
+| `/all` | Tous les comptes |
+| `/csv` | Sortie au format CSV |
+| `exit` | Quitte Mimikatz |
+
+**Partie 3 : validation**
+
+9. Saisis la réponse exactement comme ci-dessus (espaces et virgule compris) → **Submit**.
+
+---
+
+### ❓ Question 3 — L'outil PowerShell chargé en mémoire
+
+| | |
+|---|---|
+| **Question (EN)** | Some PowerShell code has been loaded into memory that scans/targets network shares. Leverage the available PowerShell logs to identify from which popular hacking tool this code derives. Answer format (one word): P____V___ |
+| **Question (FR)** | Du code PowerShell chargé en mémoire scanne les partages réseau. Avec les logs PowerShell, trouve de quel outil de hacking connu il provient (un mot : `P____V___`). |
+| **Réponse (FR)** | PowerView |
+| **Réponse à mettre sur HTB** | `PowerView` |
+
+**🧭 Procédure complète**
+
+**Partie 0 : connexion à la cible** (identique aux questions précédentes)
+
+1. **Spawn Target** → `IP_CIBLE`.
+2. Pwnbox, ou VPN :
+   ```bash
+   sudo openvpn ~/Downloads/NOM_DU_FICHIER.ovpn
+   ip -4 addr show tun0
+   curl -sI http://IP_CIBLE:5601/ | head -n 1
+   ```
+3. `http://IP_CIBLE:5601` → **Discover** → data view `windows*` → **15 Years ago** → **Apply**.
+
+**Partie 1 : la recherche** ⚠️ *méthode reconstituée, confiance moyenne*
+
+4. Les logs PowerShell sont dans l'index `windows*`. Le **Script Block Logging** enregistre le contenu des scripts, même chargés en mémoire, sous l'event ID **4104**.
+5. Requête de départ :
+   ```
+   event.code:4104
+   ```
+6. Ajoute les colonnes `host.hostname`, `user.name`, et le champ qui contient le code du script (selon l'index : `powershell.file.script_block_text` ou `message`).
+7. Affine avec des mots typiques d'un scan de partages :
+   ```
+   event.code:4104 AND "Invoke-ShareFinder"
+   ```
+   puis, si rien ne sort : `event.code:4104 AND "Find-DomainShare"`.
+8. Ouvre le document : les noms de fonctions du script (`Get-Net…`, `Invoke-ShareFinder`, `Find-DomainShare`, …) et les commentaires d'en-tête appartiennent à **PowerView**, un script de reconnaissance Active Directory de la suite **PowerSploit**.
+9. Contrôle du format : `P____V___` = P + 4 lettres + V + 3 lettres → **PowerView** (P-o-w-e-r / V-i-e-w).
+
+✔️ **Plan B** : recherche en texte libre sur le mot `PowerView` ou `PowerSploit` dans `windows*`.
+
+**Partie 2 : validation**
+
+10. Saisis `PowerView` (P et V en majuscules) → **Submit**.
 
 ---
 
@@ -389,73 +695,163 @@ Les deux se renforcent : la CTI informe le hunting, et les résultats du hunting
 2. Utilise les **clés de registre Run** pour la persistance (MITRE **T1547.001**).
 3. Utilise **PowerShell Remoting** (WinRM) pour le mouvement latéral et pour atteindre les contrôleurs de domaine.
 
-### Même environnement qu'à la page 5
-Index `windows*` (audit Windows, Sysmon, PowerShell) et `zeek*`. Même préparation : **Spawn Target**, `http://[IP]:5601` → Discover → **last 15 years**.
+### Environnement
+Index `windows*` (audit Windows, Sysmon, PowerShell) et `zeek*`. Même préparation qu'à la page 5 (voir le **Bloc de connexion** en haut de la fiche).
 
 ## ✅ Les 3 hunts
 
-> ⚠️ **Important** : le cours ne fournit **pas** les réponses de cette évaluation, et je ne les connais pas (elles dépendent de la cible). Je ne les invente pas. Voici la méthode et les requêtes de départ à adapter. Les noms de champs sont ceux demandés par l'énoncé.
+> ⚠️ **Réponses validées sur HTB.** Les **requêtes** viennent d'une reconstitution à partir de la logique du cours (confiance : bonne pour Hunt 2, moyenne pour Hunt 1 et Hunt 3). Un plan B accompagne chaque hunt. Si un nom de champ diffère sur ta cible, bascule sur le plan B.
 
 ### 🔎 Hunt 1 — Lateral Tool Transfer vers `C:\Users\Public`
 
-**Question** : donner le contenu du champ `user.name` du document lié à un outil transféré dont le nom commence par **« r »**.
+| | |
+|---|---|
+| **Énoncé (EN)** | Create a KQL query to hunt for "Lateral Tool Transfer" to `C:\Users\Public`. Enter the content of the `user.name` field in the document that is related to a transferred tool that starts with "r". |
+| **Énoncé (FR)** | Crée une requête KQL pour chasser un « Lateral Tool Transfer » vers `C:\Users\Public`. Donne le contenu du champ `user.name` du document lié à un outil transféré dont le nom commence par « r ». |
+| **Réponse (FR)** | Le compte compromis `svc-sql1` |
+| **Réponse à mettre sur HTB** | `svc-sql1` |
 
-**Idée** : quand un outil est copié vers une autre machine via un partage SMB, la création de fichier apparaît dans Sysmon (event **11**) sur la machine cible, dans `C:\Users\Public`.
+**🧭 Procédure complète**
 
-⌨️ **Requête de départ**
-```
-event.code:11 AND file.path:C\:\\Users\\Public\\*
-```
-**Étapes**
-1. Lancer la requête (période : 15 ans).
-2. Ajouter les colonnes : `file.name`, `file.path`, `user.name`, `host.hostname`, `process.name`.
-3. Trier / chercher dans `file.name` ceux qui **commencent par « r »**. Option : ajouter `AND file.name:r*`.
-4. Pour distinguer un transfert distant d'une création locale, regarder `process.name` / `process.pid` (une écriture via SMB s'affiche souvent avec le processus **System**, PID 4).
-5. Ouvrir le document concerné et lire le champ **`user.name`**.
+**Partie 0 : connexion à la cible**
 
-**Réponse à mettre sur HTB** : `…` *(à compléter avec ce que tu trouves sur la cible)*
+1. **Spawn Target** (en bas de la page) → note `IP_CIBLE`.
+2. Connexion :
+   - **Pwnbox** : *View Linux Pwnbox* → Firefox.
+   - **VPN** :
+     ```bash
+     sudo openvpn ~/Downloads/NOM_DU_FICHIER.ovpn     # terminal 1
+     ip -4 addr show tun0                              # terminal 2
+     ping -c 2 IP_CIBLE
+     ```
+3. Test :
+   ```bash
+   curl -sI http://IP_CIBLE:5601/ | head -n 1
+   ```
+   (patiente 3 à 5 minutes si pas de réponse)
+4. Navigateur : `http://IP_CIBLE:5601`
+5. Fuseau : `http://IP_CIBLE:5601/app/management/kibana/settings` → **Europe/Copenhagen** → **Save changes**.
+
+**Partie 1 : la chasse**
+
+6. ☰ → **Discover**, data view `windows*`, calendrier → **15 Years ago** → **Apply**.
+7. Requête (fichiers créés dans le dossier Public) :
+   ```
+   event.code:11 AND file.path:*Users\\Public*
+   ```
+   Syntaxe : dans KQL, chaque `\` d'un chemin Windows s'écrit `\\`.
+8. Ajoute les colonnes : `file.name`, `file.path`, `user.name`, `host.hostname`, `process.name`.
+9. Cible le fichier qui commence par « r » :
+   ```
+   event.code:11 AND file.path:*Users\\Public* AND file.name:r*
+   ```
+10. Ouvre le document trouvé et lis `user.name` : `svc-sql1`.
+
+✔️ **Cohérence avec la page 5** : `svc-sql1` est le compte compromis par brute force, utilisé pour le mouvement latéral (PsExec). Un outil copié sur une autre machine avec ce compte confirme le transfert latéral.
+
+✔️ **Plan B** :
+- Sans filtre sur `event.code` : `file.path:*Public* AND file.name:r*`
+- Via le réseau (SMB) dans `zeek*` : `destination.port:445`, puis recouper les horodatages.
+
+**Partie 2 : validation**
+
+11. Saisis `svc-sql1` → **Submit** (champ « Hunt 1 »).
+
+---
 
 ### 🔎 Hunt 2 — Persistance par clés Run du registre
 
-**Question** : donner le contenu du champ `registry.value` du document lié à la **première** action de persistance par registre.
+| | |
+|---|---|
+| **Énoncé (EN)** | Create a KQL query to hunt for "Boot or Logon Autostart Execution: Registry Run Keys / Startup Folder". Enter the content of the `registry.value` field in the document that is related to the first registry-based persistence action. |
+| **Énoncé (FR)** | Crée une requête KQL pour chasser la persistance par clés Run / dossier Démarrage. Donne le contenu du champ `registry.value` du document lié à la **première** action de persistance par registre. |
+| **Réponse (FR)** | Valeur de registre créée |
+| **Réponse à mettre sur HTB** | `LgvHsviAUVTsIN` |
 
-**Idée** : Sysmon enregistre les modifications de registre (event **13**, *RegistryEvent Value Set*). On cible les clés `Run` / `RunOnce`.
+**🧭 Procédure complète**
 
-⌨️ **Requête de départ**
+**Partie 0 : connexion à la cible** (mêmes étapes que le Hunt 1)
+
+1. **Spawn Target** → `IP_CIBLE`.
+2. Pwnbox, ou VPN :
+   ```bash
+   sudo openvpn ~/Downloads/NOM_DU_FICHIER.ovpn
+   ip -4 addr show tun0
+   ping -c 2 IP_CIBLE
+   curl -sI http://IP_CIBLE:5601/ | head -n 1
+   ```
+3. `http://IP_CIBLE:5601` → fuseau **Europe/Copenhagen**.
+
+**Partie 1 : la chasse**
+
+4. ☰ → **Discover**, data view `windows*`, **15 Years ago** → **Apply**.
+5. Requête (Sysmon event 13 = valeur de registre écrite, sur la clé Run) :
+   ```
+   event.code:13 AND registry.path:*CurrentVersion\\Run*
+   ```
+6. Ajoute les colonnes : `@timestamp`, `registry.path`, `registry.value`, `process.name`, `host.hostname`, `user.name`.
+7. **Trie par date croissante** (survole l'en-tête `@timestamp` → flèche de tri) pour avoir l'action la **plus ancienne** en premier.
+8. Ouvre la première ligne pertinente (écriture dans une clé `…\Run\…`) et lis `registry.value` : `LgvHsviAUVTsIN`.
+
+✔️ **Plan B** :
 ```
-event.code:13 AND registry.path:*\\CurrentVersion\\Run*
+registry.path:*Run*
 ```
-**Étapes**
-1. Lancer la requête.
-2. Ajouter les colonnes : `registry.path`, `registry.value`, `process.name`, `host.hostname`, `user.name`.
-3. **Trier par date croissante** (la plus ancienne en premier), puisqu'on cherche la **première** action.
-4. Ouvrir le premier document pertinent et lire `registry.value`.
-5. Si rien ne sort, essayer `registry.path:*Run*` ou retirer le filtre sur `event.code`.
+ou sans `event.code`. Les majuscules et minuscules comptent dans la réponse.
 
-**Réponse à mettre sur HTB** : `…` *(à compléter)*
+**Partie 2 : validation**
+
+9. Saisis `LgvHsviAUVTsIN` → **Submit** (champ « Hunt 2 »).
+
+---
 
 ### 🔎 Hunt 3 — PowerShell Remoting vers DC1
 
-**Question** : donner le contenu du champ `winlog.user.name` du document lié au mouvement latéral par PowerShell Remoting **vers DC1**.
+| | |
+|---|---|
+| **Énoncé (EN)** | Create a KQL query to hunt for "PowerShell Remoting for Lateral Movement". Enter the content of the `winlog.user.name` field in the document that is related to PowerShell remoting-based lateral movement towards DC1. |
+| **Énoncé (FR)** | Crée une requête KQL pour chasser le mouvement latéral par PowerShell Remoting. Donne le contenu du champ `winlog.user.name` du document lié au PowerShell Remoting vers DC1. |
+| **Réponse (FR)** | Le compte compromis `svc-sql1` |
+| **Réponse à mettre sur HTB** | `svc-sql1` |
 
-**Idée** : un PowerShell Remoting entrant fait apparaître le processus **`wsmprovhost.exe`** sur la machine cible (ici DC1), et des connexions WinRM (ports **5985** HTTP / **5986** HTTPS).
+**🧭 Procédure complète**
 
-⌨️ **Requêtes de départ** (essayer dans cet ordre)
-```
-event.code:1 AND process.name:"wsmprovhost.exe"
-```
-```
-destination.port:(5985 OR 5986)
-```
-**Étapes**
-1. Lancer la première requête et ajouter les colonnes : `host.hostname`, `process.name`, `process.parent.name`, `winlog.user.name`, `user.name`.
-2. Garder les lignes où **`host.hostname`** correspond à **DC1**.
-3. Lire `winlog.user.name` dans le document concerné.
-4. Si la requête ne renvoie rien, utiliser la seconde (trafic WinRM dans `zeek*` ou événements Sysmon 3) pour identifier la source, puis recouper avec `event.code:4624` sur DC1.
+**Partie 0 : connexion à la cible** (mêmes étapes que le Hunt 1)
 
-**Réponse à mettre sur HTB** : `…` *(à compléter)*
+1. **Spawn Target** → `IP_CIBLE`.
+2. Pwnbox, ou VPN :
+   ```bash
+   sudo openvpn ~/Downloads/NOM_DU_FICHIER.ovpn
+   ip -4 addr show tun0
+   ping -c 2 IP_CIBLE
+   curl -sI http://IP_CIBLE:5601/ | head -n 1
+   ```
+3. `http://IP_CIBLE:5601` → fuseau **Europe/Copenhagen**.
 
-> 💡 Si tu me donnes ce que tu trouves (ou les résultats de tes requêtes), je complète ces trois réponses et la méthode exacte.
+**Partie 1 : la chasse**
+
+4. ☰ → **Discover**, data view `windows*`, **15 Years ago** → **Apply**.
+5. Principe : un PowerShell Remoting entrant démarre le processus **`wsmprovhost.exe`** sur la machine cible, et utilise WinRM (ports **5985** HTTP / **5986** HTTPS). Requête de départ :
+   ```
+   event.code:1 AND process.name:"wsmprovhost.exe"
+   ```
+6. Ajoute les colonnes : `@timestamp`, `host.hostname`, `process.name`, `process.parent.name`, `user.name`, `winlog.user.name`.
+7. Garde les lignes où `host.hostname` correspond à **DC1** (ajoute `AND host.hostname:DC1` si besoin).
+8. Lis `winlog.user.name` dans le document : `svc-sql1`.
+
+✔️ **Plan B** (si `winlog.user.name` est vide dans le document Sysmon) : ce champ vient de l'en-tête des événements Windows (Security, PowerShell), pas toujours de Sysmon. Dans ce cas :
+```
+host.hostname:DC1 AND event.code:4624 AND winlog.event_data.LogonType:3
+```
+ou
+```
+host.hostname:DC1 AND process.name:"wsmprovhost.exe"
+```
+puis ouvre le document et lis `winlog.user.name`. Côté réseau (`zeek*`) : `destination.port:(5985 OR 5986)` pour identifier la machine source du remoting.
+
+**Partie 2 : validation**
+
+9. Saisis `svc-sql1` → **Submit** (champ « Hunt 3 »).
 
 ---
 
@@ -475,13 +871,13 @@ destination.port:(5985 OR 5986)
 | 5 | Fichier VBS de default.exe | `XceGuhkzaTrOy.vbs` |
 | 5 | Arguments de mimikatz | `lsadump::dcsync /domain:eagle.local /all /csv, exit` |
 | 5 | Outil derrière le code PowerShell | `PowerView` |
-| 6 | Hunt 1 (`user.name`) | *(à compléter)* |
-| 6 | Hunt 2 (`registry.value`) | *(à compléter)* |
-| 6 | Hunt 3 (`winlog.user.name`) | *(à compléter)* |
+| 6 | Hunt 1 (`user.name`) | `svc-sql1` |
+| 6 | Hunt 2 (`registry.value`) | `LgvHsviAUVTsIN` |
+| 6 | Hunt 3 (`winlog.user.name`) | `svc-sql1` |
 
 ---
 
-# 🧠 Cheat-sheet KQL du module
+# Cheat-sheet KQL du module
 
 | Objectif | Requête |
 |---|---|
@@ -490,11 +886,15 @@ destination.port:(5985 OR 5986)
 | Connexions réseau d'un hôte | `event.code:3 AND host.hostname:WS001` |
 | DNS Zeek d'une machine | `source.ip:192.168.28.130 AND dns.question.name:*` |
 | Process lancé avec un fichier en argument | `event.code:1 AND process.command_line:*invoice.one*` |
-| Enfants d'un processus parent (par nom) | `event.code:1 AND process.parent.name:"ONENOTE.EXE"` |
-| Enfants d'un processus parent (par ligne de commande) | `event.code:1 AND process.parent.command_line:*invoice.bat*` |
+| Enfants d'un processus (par nom du parent) | `event.code:1 AND process.parent.name:"ONENOTE.EXE"` |
+| Enfants d'un processus (par ligne de commande du parent) | `event.code:1 AND process.parent.command_line:*invoice.bat*` |
 | Activité d'un processus précis | `process.pid:"9944" and process.name:"powershell.exe"` |
 | Exécution d'un binaire | `process.name:"default.exe"` |
 | Recherche par hash | `process.hash.sha256:<hash en minuscules>` |
 | Logons réseau réussis/échoués depuis une IP | `(event.code:4624 OR event.code:4625) AND winlog.event_data.LogonType:3 AND source.ip:192.168.28.130` |
+| Fichiers dans le dossier Public | `event.code:11 AND file.path:*Users\\Public*` |
+| Persistance par clé Run | `event.code:13 AND registry.path:*CurrentVersion\\Run*` |
+| PowerShell Remoting (cible) | `event.code:1 AND process.name:"wsmprovhost.exe"` |
+| Scripts PowerShell (contenu) | `event.code:4104` |
 
-**Syntaxe KQL à retenir** : `AND` / `OR` / `NOT`, `*` pour joker, guillemets pour une valeur exacte, `\\` pour échapper les antislashs des chemins Windows.
+**Syntaxe KQL** : `AND` / `OR` / `NOT`, `*` pour joker, guillemets pour une valeur exacte, `\\` pour chaque antislash d'un chemin Windows, parenthèses pour grouper (`destination.port:(5985 OR 5986)`).
