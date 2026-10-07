@@ -100,6 +100,7 @@ msf6 exploit(...) > run
 Connexion à MySQL avec les identifiants extraits — confirmation de la validité du mot de passe :
 
 ```bash
+shell
 mysql -u root -p'SuperSecureCraft123Pass!' -e "SELECT 1;"
 ```
 
